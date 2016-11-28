@@ -1,9 +1,12 @@
+import logging
 import tensorflow as tf
 from tensorflow.python.ops import rnn_cell
 
 import numpy as np
 import argparse
 from collections import namedtuple
+
+logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
 BATCH_SIZE = 50
 TIME_STEPS = 1
@@ -25,9 +28,27 @@ NODE_OUTPUT_SIZES = {
     'O': 15,
 }
 
+NODES = [
+    ('a', 'H'),
+    ('b', 'O'),
+    ('c', 'O'),
+    ('d', 'O'),
+]
+
+EDGES = [
+    ('a', 'b'),
+    ('a', 'c'),
+    ('a', 'd'),
+]
+
 
 class Loader(object):
-    pass
+    def __init__(self):
+        pass
+
+    def batch(self):
+        """Returns train, val, test tuple."""
+        pass
 
 def lstm(inputs, num_units):
     """
@@ -156,6 +177,17 @@ class SRNN(object):
                         output_size=NODE_OUTPUT_SIZES[node_type])
                 self.optimizers[node] = optimizer(self.nodeRNNs[node], self.node_outputs[node])
             self.scopes.add(node_type)
+
+    def _train(self):
+
+
+    def train_model(self):
+        tf.initialize_all_variables().run()
+        merged_summary_op = tf.merge_all_summaries()
+
+        summary_writer = tf.train.SummaryWriter(LOGS_DIR, graph_def=self.sess.graph_def)
+        for epoch in range(NUM_EPOCHS):
+            pass
 
 def main():
     sttypes = {
