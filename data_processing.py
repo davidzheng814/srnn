@@ -1,3 +1,23 @@
+"""
+README:
+The appropriate numpy arrays are stored in numpy_arrays/'10-digit-ID'.npz.
+Each npz file contains a bunch of numpy arrays. Each numpy array is shaped as follows:
+
+    h_inputs: (NUM_HUMANS, num_segments, NUM_H_FEATURES)
+    ht_inputs: (NUM_HUMANS, num_segments, NUM_HT_FEATURES)
+    ho_inputs: (NUM_HUMANS, num_segments, NUM_HO_FEATURES)
+    h_outputs: (NUM_HUMANS, num_segments, num_act_classes)
+    o_inputs: (num_objects, num_segments, NUM_O_FEATURES)
+    ot_inputs: (num_objects, num_segments, NUM_OT_FEATURES)
+    oo_inputs: (num_objects, num_segments, 2 * NUM_OO_FEATURES)
+    oh_inputs: (num_objects, num_segments, NUM_HO_FEATURES)
+    o_outputs: (num_objects, num_segments, num_afford)
+
+For the ones with multiple edges (ho, ot, oo), the multiple edges are summed together to get the final result
+The oo_inputs are created by concatenating the outgoing edge first with the ingoing edge second (and then summed together)
+The h_outputs and o_outputs are one-hot vectors
+"""
+
 import numpy as np
 import argparse
 import os
