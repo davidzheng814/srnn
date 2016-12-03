@@ -3,6 +3,7 @@ import tensorflow as tf
 import glob
 
 from tensorflow.python.ops import rnn_cell
+from sklearn.metrics import f1_score
 
 import os
 import random
@@ -12,28 +13,34 @@ from collections import namedtuple
 
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
-NUM_EPOCHS = 10
+NUM_EPOCHS = 200
 BATCH_SIZE = 5
-MAX_TIME = 20
+MAX_TIME = 25
 
-LEARNING_RATE = 0.001
+LEARNING_RATE = .05
 BETA_1 = 0.9
 
 USE_CHECKPOINT = False
-CHECKPOINT = ''
+CHECKPOINT = 'weights/model.ckpt'
 LOGS_DIR = 'logs/'
 
-DATA_DIR = 'data/'
+DATA_DIR = 'numpy_arrays/'
 TRAIN_RATIO = 0.75
 
-HT_INP_SIZE = 5
-OT_INP_SIZE = 5
-HO_INP_SIZE = 5
-OO_INP_SIZE = 5
-H_INP_SIZE = 5
-O_INP_SIZE = 5
-H_OUT_SIZE = 5
-O_OUT_SIZE = 5
+HT_INP_SIZE = 160
+OT_INP_SIZE = 40
+HO_INP_SIZE = 400
+OO_INP_SIZE = 400
+H_INP_SIZE = 630
+O_INP_SIZE = 180
+H_OUT_SIZE = 10
+O_OUT_SIZE = 12
+
+def pad(x):
+    r = np.zeros([x.shape[0], MAX_TIME, x.shape[2]])
+    r[:x.shape[0],:x.shape[1],:x.shape[2]] = x
+
+    return r
 
 class Loader(object):
     def __init__(self, file_list):
@@ -56,28 +63,28 @@ class Loader(object):
         self.o_outputs = np.zeros([0, MAX_TIME, O_OUT_SIZE])
         for filename in self.file_list:
             data = np.load(filename)
-            self.ht_inputs = np.append(self.ht_inputs, data['ht_inputs'], axis=0)
-            self.ot_inputs = np.append(self.ot_inputs, data['ot_inputs'], axis=0)
-            self.ho_inputs = np.append(self.ho_inputs, data['ho_inputs'], axis=0)
-            self.oh_inputs = np.append(self.oh_inputs, data['oh_inputs'], axis=0)
-            self.oo_inputs = np.append(self.oo_inputs, data['oo_inputs'], axis=0)
-            self.h_inputs = np.append(self.h_inputs, data['h_inputs'], axis=0)
-            self.o_inputs = np.append(self.o_inputs, data['o_inputs'], axis=0)
-            self.h_outputs = np.append(self.h_outputs, data['h_outputs'], axis=0)
-            self.o_outputs = np.append(self.o_outputs, data['o_outputs'], axis=0)
+            self.ht_inputs = np.append(self.ht_inputs, pad(data['ht_inputs']), axis=0)
+            self.ot_inputs = np.append(self.ot_inputs, pad(data['ot_inputs']), axis=0)
+            self.ho_inputs = np.append(self.ho_inputs, pad(data['ho_inputs']), axis=0)
+            self.oh_inputs = np.append(self.oh_inputs, pad(data['oh_inputs']), axis=0)
+            self.oo_inputs = np.append(self.oo_inputs, pad(data['oo_inputs']), axis=0)
+            self.h_inputs = np.append(self.h_inputs, pad(data['h_inputs']), axis=0)
+            self.o_inputs = np.append(self.o_inputs, pad(data['o_inputs']), axis=0)
+            self.h_outputs = np.append(self.h_outputs, pad(data['h_outputs']), axis=0)
+            self.o_outputs = np.append(self.o_outputs, pad(data['o_outputs']), axis=0)
 
         logging.info("Loaded %d files." % (len(self.file_list),))
 
     def get_batches(self, is_h, is_train):
         size = len(self.h_outputs) if is_h else len(self.o_outputs)
         num_train = int(TRAIN_RATIO * size)
-        inds = range(0, size, BATCH_SIZE)
+        inds = range(0, size, BATCH_SIZE)[:-1]
         if is_train:
-            inds = inds[:num_train]
+            inds = range(0, num_train - BATCH_SIZE, BATCH_SIZE)
+            random.shuffle(inds)
         else:
-            inds = inds[num_train:]
+            inds = range(num_train, size - BATCH_SIZE, BATCH_SIZE)
 
-        random.shuffle(inds)
         if is_h:
             for ind in inds:
                 end = ind + BATCH_SIZE
@@ -132,6 +139,18 @@ def nodeRNN(inputs, output_size=10):
 
     return h
 
+def scores(true, pred):
+    rows = np.where(np.sum(true, 1) > 0)
+    true = np.reshape(np.argmax(true[rows], 1), (-1,))
+    pred = np.reshape(np.argmax(pred[rows], 1), (-1,))
+
+    acc = np.mean(np.equal(true, pred))
+    f1 = f1_score(true, pred, average='weighted')
+    f1_micro = f1_score(true, pred, average='micro')
+    f1_macro = f1_score(true, pred, average='macro')
+    print f1, f1_micro, f1_macro
+    return acc, f1
+
 class SRNN(object):
     def __init__(self, sess, loader):
         self.sess = sess
@@ -159,29 +178,32 @@ class SRNN(object):
             self.O = nodeRNN(inp, output_size=O_OUT_SIZE)
 
     def build_model(self):
-        self.ht_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, HT_INP_SIZE])
-        self.ot_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, OT_INP_SIZE])
-        self.ho_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, HO_INP_SIZE])
-        self.oo_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, OO_INP_SIZE])
-        self.h_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, H_INP_SIZE])
-        self.o_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, O_INP_SIZE])
-        self.h_outputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, H_OUT_SIZE])
-        self.o_outputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, O_OUT_SIZE])
+        self.ht_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, HT_INP_SIZE], 'ht_inp')
+        self.ot_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, OT_INP_SIZE], 'ot_inp')
+        self.ho_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, HO_INP_SIZE], 'ho_inp')
+        self.oo_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, OO_INP_SIZE], 'oo_inp')
+        self.h_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, H_INP_SIZE], 'h_inp')
+        self.o_inputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, O_INP_SIZE], 'o_inp')
+        self.h_outputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, H_OUT_SIZE], 'h_out')
+        self.o_outputs = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_TIME, O_OUT_SIZE], 'o_out')
 
         self._model()
  
-        h_out_re = tf.reshape(self.h_outputs, [-1, H_OUT_SIZE])
-        H_re = tf.reshape(self.H, [-1, H_OUT_SIZE])
-        o_out_re = tf.reshape(self.o_outputs, [-1, O_OUT_SIZE])
-        O_re = tf.reshape(self.O, [-1, O_OUT_SIZE])
+        self.h_true = tf.reshape(self.h_outputs, [-1, H_OUT_SIZE])
+        self.h_pred = tf.reshape(self.H, [-1, H_OUT_SIZE])
+        self.o_true = tf.reshape(self.o_outputs, [-1, O_OUT_SIZE])
+        self.o_pred = tf.reshape(self.O, [-1, O_OUT_SIZE])
 
-        self.h_loss = tf.nn.softmax_cross_entropy_with_logits(H_re, h_out_re)
-        self.h_optim = tf.train.AdamOptimizer(LEARNING_RATE, beta1=BETA_1).minimize(self.h_loss)
-        self.o_loss = tf.nn.softmax_cross_entropy_with_logits(O_re, o_out_re)
-        self.o_optim = tf.train.AdamOptimizer(LEARNING_RATE, beta1=BETA_1).minimize(self.o_loss)
+        self.h_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(self.h_pred, self.h_true))
+        tf.scalar_summary('h_loss', self.h_loss)
+        # self.h_optim = tf.train.AdamOptimizer(LEARNING_RATE, beta1=BETA_1).minimize(self.h_loss)
+        self.h_optim = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(self.h_loss)
+        self.o_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(self.o_pred, self.o_true))
+        tf.scalar_summary('o_loss', self.o_loss)
+        # self.o_optim = tf.train.AdamOptimizer(LEARNING_RATE, beta1=BETA_1).minimize(self.o_loss)
+        self.o_optim = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(self.o_loss)
 
         self.merged = tf.merge_all_summaries()
-
 
     def run_batches(self, is_h, is_train, start_ind, writer):
         batches = self.loader.get_batches(is_h, is_train)
@@ -195,7 +217,8 @@ class SRNN(object):
                 self.h_inputs: x[2],
                 self.h_outputs: x[3]
             }
-            loss = self.h_loss
+            loss, true, pred = self.h_loss, self.h_true, self.h_pred
+            arr = [np.zeros((0, H_OUT_SIZE)), np.zeros((0, H_OUT_SIZE))]
             optim = self.h_optim
         else:
             feed_dict = lambda x: {
@@ -205,27 +228,31 @@ class SRNN(object):
                 self.o_inputs: x[3],
                 self.o_outputs: x[4]
             }
-            loss = self.o_loss
+            loss, true, pred = self.o_loss, self.o_true, self.o_pred
+            arr = [np.zeros((0, O_OUT_SIZE)), np.zeros((0, O_OUT_SIZE))]
             optim = self.o_optim
 
-        funcs = [loss, self.merged]
+        funcs = [true, pred, loss]
         if is_train:
             funcs.append(optim)
-
+        
         for batch in batches:
-            res = sess.run(funcs, feed_dict=feed_dict)
-            loss_sum += res[0]
-            writer.add_summary(res[1], ind)
+            res = self.sess.run(funcs, feed_dict=feed_dict(batch))
+            arr = [np.append(arr[i], res[i], axis=0) for i in range(2)]
+            loss_sum += res[2]
             ind += 1
             count += 1
 
-        return loss_sum / count, ind
+        acc, f1 = scores(arr[0], arr[1])
+
+        return loss_sum / count, ind, acc, f1
 
     def train_model(self):
         train_writer = tf.train.SummaryWriter(os.path.join(LOGS_DIR, 'train'),
                 graph=self.sess.graph)
         val_writer = tf.train.SummaryWriter(os.path.join(LOGS_DIR, 'val'),
                 graph=self.sess.graph)
+
         saver = tf.train.Saver()
 
         with self.sess as sess:
@@ -240,27 +267,27 @@ class SRNN(object):
             for epoch in range(NUM_EPOCHS):
                 logging.info("Begin Epoch %d" % (epoch,))
                 logging.info("Begin H Train")
-                loss, ind = self.run_batches(True, True, ind, train_writer)
-                logging.info("H Train Loss: %0.4f" % (loss,))
+                loss, ind, acc, f1 = self.run_batches(True, True, ind, train_writer)
+                logging.info("H Train Loss: %0.4f, Acc: %0.4f, F1: %0.4f" % (loss, acc, f1))
 
                 logging.info("Begin O Train")
-                loss, ind = self.run_batches(False, True, ind, train_writer)
-                logging.info("O Train Loss: %0.4f" % (loss,))
+                loss, ind, acc, f1 = self.run_batches(False, True, ind, train_writer)
+                logging.info("O Train Loss: %0.4f, Acc: %0.4f, F1: %0.4f" % (loss, acc, f1))
 
                 logging.info("Begin H Val")
-                loss, ind = self.run_batches(True, False, ind, val_writer)
-                logging.info("H Val Loss: %0.4f" % (loss,))
+                loss, ind, acc, f1 = self.run_batches(True, False, ind, val_writer)
+                logging.info("H Val Loss: %0.4f, Acc: %0.4f, F1: %0.4f" % (loss, acc, f1))
 
                 logging.info("Begin O Val")
-                loss, ind = self.run_batches(False, False, ind, val_writer)
-                logging.info("H Val Loss: %0.4f" % (loss,))
+                loss, ind, acc, f1 = self.run_batches(False, False, ind, val_writer)
+                logging.info("O Val Loss: %0.4f, Acc: %0.4f, F1: %0.4f" % (loss, acc, f1))
 
                 logging.info("Save Checkpoint")
                 saver.save(sess, CHECKPOINT)
 
 def main():
     sess = tf.Session()
-    file_list = glob.glob(DATA_DIR)
+    file_list = glob.glob(DATA_DIR + '/*')
     logging.info("Loading Dataset")
     loader = Loader(file_list)
     srnn = SRNN(sess, loader)
@@ -271,4 +298,16 @@ def main():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--num-epochs', type=int)
+    parser.add_argument('--batch-size', type=int)
+    parser.add_argument('--use-ckpt', action="store_true")
+
+    args = parser.parse_args()
+    if args.num_epochs:
+        NUM_EPOCHS = args.num_epochs
+    if args.batch_size:
+        NUM_EPOCHS = args.batch_size
+    if args.use_ckpt:
+        USE_CHECKPOINT = True
+
     main()
