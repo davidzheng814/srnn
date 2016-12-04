@@ -22,8 +22,8 @@ import numpy as np
 import argparse
 import os
 
-FORMAT_ROOT = 'segments_svm_format'
-DATA_ROOT = 'features_binary_svm_format'
+FORMAT_ROOT = 'CAD120_data/segments_svm_format'
+DATA_ROOT = 'CAD120_data/features_binary_svm_format'
 NUMPY_ROOT = 'numpy_arrays'
 
 NUM_O_FEATURES = 180

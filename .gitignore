@@ -87,3 +87,6 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+human3.6.npz
+Release-v1.1/
