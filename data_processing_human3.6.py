@@ -31,6 +31,8 @@ import xml.etree.ElementTree as ET
 from spacepy import pycdf
 import numpy as np
 import os
+import math
+from transforms3d import euler
 
 NUM_JOINTS = 32
 TRAINING_USERS = ['S1', 'S6', 'S7', 'S8', 'S9', 'S11']
@@ -58,6 +60,12 @@ def parse_metadata():
         rotInd_array[id] = rot_ind
     return rotInd_array
 
+def convert(degree):
+    return math.radians(degree % 360)
+def exp_map(v):
+    vec, angle = euler.euler2axangle(*map(convert, v))
+    return angle * vec
+
 def downsize(array):
     return array[::2]
 def extract(array, start, end):
@@ -78,6 +86,7 @@ def get_node_features_for_one(file, rotInd_array):
                 for i in range(len(rotInd_array[joint_id])):
                     rotInd = rotInd_array[joint_id][i]
                     joint_array[piece][t][joint_id][i] = cdf[piece * NUM_TIMESTEPS + t][rotInd-1]
+                joint_array[piece][t][joint_id] = exp_map(joint_array[piece][t][joint_id])
     # joint_array[piece][time][joint_id] gives the list of three rotations (z, x, y)
     # now create the node features
     left_arm = extract(joint_array, 16, 24)
@@ -92,6 +101,9 @@ def make_inp_out_time(inp, stride):
     out = np.append(inp[stride:], np.zeros((stride, NUM_TIMESTEPS, len(inp[0][0]))), axis=0)
     time = np.append(inp, out, axis=2)
     return inp, out, time
+
+def normalize(array):
+    return (array - np.mean(array)) / np.std(array)
 
 def get_node_features():
     rotInd_array = parse_metadata()
@@ -125,7 +137,23 @@ def get_node_features():
 
     a_a = np.repeat(np.append(a_inp[::2], a_inp[1::2], axis=2), 2, axis=0)
     l_l = np.repeat(np.append(l_inp[::2], l_inp[1::2], axis=2), 2, axis=0)
-    
+
+    a_inp = normalize(a_inp)
+    a_out = normalize(a_out)
+    a_inp = normalize(a_time)
+    l_inp = normalize(l_inp)
+    l_out = normalize(l_out)
+    l_inp = normalize(l_time)
+    s_inp = normalize(s_inp)
+    s_out = normalize(s_out)
+    s_inp = normalize(s_time)
+    s_a = normalize(s_a)
+    s_l = normalize(s_l)
+    a_s = normalize(a_s)
+    l_s = normalize(l_s)
+    a_a = normalize(a_a)
+    l_l = normalize(l_l)
+
     filename = "human3.6.npz"
     with open(filename, 'w') as f:
         np.savez(f, a_inp=a_inp, a_out=a_out, a_time=a_time, l_inp=l_inp, l_out=l_out, l_time=l_time, 
