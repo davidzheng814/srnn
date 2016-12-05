@@ -19,6 +19,9 @@ Each npz file contains a bunch of numpy arrays. Each numpy array is shaped as fo
     a_a: (2 * num_samples, NUM_TIMESTEPS, 2 * NUM_A_FEATURES)
     l_l: (2 * num_samples, NUM_TIMESTEPS, 2 * NUM_L_FEATURES)
 
+    training data goes from [0, val_index)
+    validation data goes from [val_index, len())
+
 For the ones with multiple edges (s-a, s-l), the multiple edges are summed together to get the final result
 The s-a, s-l, a-s, l-s inputs are created by concatenating the SPINE first with the arm/leg second
 The a-a and l-l inputs are created by concatenating the LEFT one first with the RIGHT one second
@@ -35,7 +38,7 @@ import math
 from transforms3d import euler
 
 NUM_JOINTS = 32
-TRAINING_USERS = ['S1', 'S6', 'S7', 'S8', 'S9', 'S11']
+USERS = ['S1', 'S5', 'S6', 'S7', 'S8', 'S9', 'S11']
 ACTIVITIES = ['Discussion', 'Eating', 'Smoking', 'Walking']
 NUM_A_FEATURES = 24
 NUM_L_FEATURES = 15
@@ -105,21 +108,23 @@ def make_inp_out_time(inp, stride):
 def normalize(array):
     return (array - np.mean(array)) / np.std(array)
 
-def get_node_features():
+def get_node_features(activity):
     rotInd_array = parse_metadata()
     a, l, s = [], [], []
-    for user in TRAINING_USERS:
-        for activity in ACTIVITIES:
-            directory = os.path.join(DATA_ROOT, activity + '/' + user + '/MyPoseFeatures/D3_Angles/')
-            for file in os.listdir(directory):
-                filename = os.path.join(directory, file)
-                left_arm, right_arm, left_leg, right_leg, spine = get_node_features_for_one(filename, rotInd_array)
-                for piece in range(len(spine)):
-                    a.append(left_arm[piece])
-                    a.append(right_arm[piece])
-                    l.append(left_leg[piece])
-                    l.append(right_leg[piece])
-                    s.append(spine[piece])
+    val_index = 0
+    for user in USERS:
+        if (user == 'S11'):
+            val_index = len(s)
+        directory = os.path.join(DATA_ROOT, activity + '/' + user + '/MyPoseFeatures/D3_Angles/')
+        for file in os.listdir(directory):
+            filename = os.path.join(directory, file)
+            left_arm, right_arm, left_leg, right_leg, spine = get_node_features_for_one(filename, rotInd_array)
+            for piece in range(len(spine)):
+                a.append(left_arm[piece])
+                a.append(right_arm[piece])
+                l.append(left_leg[piece])
+                l.append(right_leg[piece])
+                s.append(spine[piece])
     a_inp, a_out, a_time = make_inp_out_time(np.asarray(a), 2)
     l_inp, l_out, l_time = make_inp_out_time(np.asarray(l), 2)
     s_inp, s_out, s_time = make_inp_out_time(np.asarray(s), 1)
@@ -154,12 +159,12 @@ def get_node_features():
     a_a = normalize(a_a)
     l_l = normalize(l_l)
 
-    filename = "human3.6.npz"
+    filename = "human3.6_" + activity + ".npz"
     with open(filename, 'w') as f:
-        np.savez(f, a_inp=a_inp, a_out=a_out, a_time=a_time, l_inp=l_inp, l_out=l_out, l_time=l_time, 
-            s_inp=s_inp, s_out=s_out, s_time=s_time, s_a=s_a, s_l=s_l, a_s=a_s, l_s=l_s, a_a=a_a, l_l=l_l)
+        np.savez(f, a_inp=a_inp, a_out=a_out, a_time=a_time, l_inp=l_inp, l_out=l_out, l_time=l_time, s_inp=s_inp, 
+            s_out=s_out, s_time=s_time, s_a=s_a, s_l=s_l, a_s=a_s, l_s=l_s, a_a=a_a, l_l=l_l, val_index=val_index)
         f.close()
 
 if __name__ == '__main__':
-    get_node_features()
-
+    for activity in ACTIVITIES:
+        get_node_features(activity)
