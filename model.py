@@ -26,6 +26,7 @@ LOGS_DIR = 'logs/'
 
 DATA_DIR = 'numpy_arrays/'
 TRAIN_IND = 400
+START_ITER = 0
 
 Node = namedtuple('Node', ['name', 'inp_size', 'time_size', 'out_size'])
 NODES = [
@@ -228,7 +229,7 @@ class SRNN(object):
         self.loader = loader
 
         self.noise_vals = {
-            250: 0.01,
+            109: 0.01,
             500: 0.05,
             1000: 0.1,
             1300: 0.2,
@@ -312,8 +313,10 @@ class SRNN(object):
             batch = next(all_batches[i], False)
             if batch:
                 if is_train and i == 0:
+                    logging.info("Iter: %d" % (self.iter,))
                     if self.iter in self.noise_vals:
                         self.noise = self.noise_vals[self.iter]
+                        logging.info("Adding Noise: %0.3f", self.noise)
                     self.iter += 1
 
                 inputs = [self.node_inputs[i], self.time_inputs[i],
@@ -361,7 +364,7 @@ class SRNN(object):
                 logging.info("Initializing parameters")
                 sess.run(tf.initialize_all_variables())
 
-            self.ind, self.iter = 0, 0
+            self.ind, self.iter = 0, START_ITER
             self.noise = 0.
             for epoch in range(NUM_EPOCHS):
                 logging.info("Begin Epoch %d" % (epoch,))
@@ -395,6 +398,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int)
     parser.add_argument('--use-ckpt', action="store_true")
     parser.add_argument('--max-files', type=int)
+    parser.add_argument('--start-iter', type=int)
 
     args = parser.parse_args()
     if args.num_epochs:
@@ -405,5 +409,7 @@ if __name__ == '__main__':
         USE_CHECKPOINT = True
     if args.max_files:
         MAX_FILES = args.max_files
+    if args.start_iter:
+        START_ITER = args.start_iter
 
     main()
