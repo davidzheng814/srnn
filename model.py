@@ -3,7 +3,6 @@ import tensorflow as tf
 import glob
 
 from tensorflow.python.ops import rnn_cell
-from sklearn.metrics import f1_score
 
 import os
 import random
@@ -13,12 +12,12 @@ from collections import namedtuple
 
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
-NUM_EPOCHS = 100
-BATCH_SIZE = 10
-MAX_TIME = 150
+NUM_EPOCHS = 400
+BATCH_SIZE = 100
+MAX_TIME = 100
 MAX_FILES = None
 
-LEARNING_RATE = .05
+LEARNING_RATE = 1e-3
 BETA_1 = 0.9
 
 USE_CHECKPOINT = False
@@ -26,7 +25,7 @@ CHECKPOINT = 'weights/model.ckpt'
 LOGS_DIR = 'logs/'
 
 DATA_DIR = 'numpy_arrays/'
-TRAIN_RATIO = 0.75
+TRAIN_IND = 400
 
 Node = namedtuple('Node', ['name', 'inp_size', 'time_size', 'out_size'])
 NODES = [
@@ -50,11 +49,12 @@ EDGES = [
 ]
 
 def pad(x):
+    x = x[:,:MAX_TIME]
     r = np.zeros([x.shape[0], MAX_TIME, x.shape[2]])
     r[:x.shape[0],:x.shape[1],:x.shape[2]] = x
 
     return r
-
+    
 def get_name(edge, sort=True):
     if edge.node1 > edge.node2 and sort:
         edge.node2 + '_' + edge.node1
@@ -67,59 +67,93 @@ class Loader(object):
 
     def load_dataset(self):
         """"""
-        self.node_inputs = []
-        self.time_inputs = []
-        self.node_outputs = []
-        self.edge_inputs = []
+        self.node_inputs_train = []
+        self.node_inputs_val = []
+        self.time_inputs_train = []
+        self.time_inputs_val = []
+        self.node_outputs_train = []
+        self.node_outputs_val = []
+        self.edge_inputs_train = []
+        self.edge_inputs_val = []
         for i, node in enumerate(NODES):
-            self.node_inputs.append(np.zeros([0, MAX_TIME, node.inp_size]))
-            self.time_inputs.append(np.zeros([0, MAX_TIME, node.time_size]))
-            self.node_outputs.append(np.zeros([0, MAX_TIME, node.out_size]))
+            self.node_inputs_train.append(np.zeros([0, MAX_TIME, node.inp_size]))
+            self.node_inputs_val.append(np.zeros([0, MAX_TIME, node.inp_size]))
+            self.time_inputs_train.append(np.zeros([0, MAX_TIME, node.time_size]))
+            self.time_inputs_val.append(np.zeros([0, MAX_TIME, node.time_size]))
+            self.node_outputs_train.append(np.zeros([0, MAX_TIME, node.out_size]))
+            self.node_outputs_val.append(np.zeros([0, MAX_TIME, node.out_size]))
 
-            self.edge_inputs.append([])
+            self.edge_inputs_train.append([])
+            self.edge_inputs_val.append([])
             for edge in EDGES[i]:
-                self.edge_inputs[-1].append(np.zeros([0, MAX_TIME, edge.size]))
+                self.edge_inputs_train[-1].append(np.zeros([0, MAX_TIME, edge.size]))
+                self.edge_inputs_val[-1].append(np.zeros([0, MAX_TIME, edge.size]))
 
         for filename in self.file_list:
             data = np.load(filename)
+            val_ind_ = int(data['val_index'])
 
             for i, node in enumerate(NODES):
-                self.node_inputs[i] = \
-                    np.append(self.node_inputs[i], pad(data[node.name + '_inp']), 
-                              axis=0)
+                val_ind = val_ind_ if node.name == 's' else val_ind_ * 2
+                self.node_inputs_train[i] = \
+                    np.append(self.node_inputs_train[i],
+                        pad(data[node.name + '_inp'][:val_ind]), axis=0)
 
-                self.time_inputs[i] = \
-                    np.append(self.time_inputs[i], pad(data[node.name + '_time']),
-                              axis=0)
+                self.node_inputs_val[i] = \
+                    np.append(self.node_inputs_val[i],
+                        pad(data[node.name + '_inp'][val_ind:]), axis=0)
+
+                self.time_inputs_train[i] = \
+                    np.append(self.time_inputs_train[i],
+                        pad(data[node.name + '_time'][:val_ind]), axis=0)
                     
-                self.node_outputs[i] = \
-                    np.append(self.node_outputs[i], pad(data[node.name + '_out']),
-                              axis=0)
+                self.time_inputs_val[i] = \
+                    np.append(self.time_inputs_val[i],
+                        pad(data[node.name + '_time'][val_ind:]), axis=0)
+
+                self.node_outputs_train[i] = \
+                    np.append(self.node_outputs_train[i],
+                        pad(data[node.name + '_out'][:val_ind]), axis=0)
+
+                self.node_outputs_val[i] = \
+                    np.append(self.node_outputs_val[i],
+                        pad(data[node.name + '_out'][val_ind:]), axis=0)
 
                 for j, edge in enumerate(EDGES[i]):
-                    self.edge_inputs[i][j] = \
-                        np.append(self.edge_inputs[i][j], 
-                        pad(data[get_name(edge, sort=False)]),
+                    self.edge_inputs_train[i][j] = \
+                        np.append(self.edge_inputs_train[i][j], 
+                        pad(data[get_name(edge, sort=False)][:val_ind]),
+                        axis=0)
+
+                    self.edge_inputs_val[i][j] = \
+                        np.append(self.edge_inputs_val[i][j], 
+                        pad(data[get_name(edge, sort=False)][val_ind:]),
                         axis=0)
 
         logging.info("Loaded %d files." % (len(self.file_list),))
-        logging.info("Node Inputs Size: %d" % (len(self.node_inputs[0]),))
+        logging.info("Node Inputs Train Size: %d" %
+                     (len(self.node_inputs_train[0]),))
+        logging.info("Node Inputs Val Size: %d" % (len(self.node_inputs_val[0]),))
 
     def get_batches(self, node_ind, is_train):
-        size = len(self.node_inputs[node_ind])
-        num_train = int(TRAIN_RATIO * size)
-        inds = range(0, size, BATCH_SIZE)[:-1]
         if is_train:
-            inds = range(0, num_train - BATCH_SIZE, BATCH_SIZE)
+            size = len(self.node_inputs_train[node_ind])
+            inds = range(0, size - BATCH_SIZE, BATCH_SIZE)
             random.shuffle(inds)
+            inputs = [
+                self.node_inputs_train[node_ind],
+                self.time_inputs_train[node_ind],
+                self.node_outputs_train[node_ind]
+            ] + self.edge_inputs_train[node_ind]
         else:
-            inds = range(num_train, size - BATCH_SIZE, BATCH_SIZE)
+            size = len(self.node_inputs_val[node_ind])
+            inds = range(0, size - BATCH_SIZE, BATCH_SIZE)
+            inputs = [
+                self.node_inputs_val[node_ind],
+                self.time_inputs_val[node_ind],
+                self.node_outputs_val[node_ind]
+            ] + self.edge_inputs_val[node_ind]
 
-        inputs = [
-            self.node_inputs[node_ind],
-            self.time_inputs[node_ind],
-            self.node_outputs[node_ind]
-        ] + self.edge_inputs[node_ind]
 
         for ind in inds:
             end = ind + BATCH_SIZE
@@ -152,7 +186,10 @@ def dense(inp, output_size=1024):
 
     return h
 
-def edgeRNN(inputs):
+def edgeRNN(inputs, noise=None):
+    if noise is not None:
+        inputs = inputs + tf.random_normal(inputs.get_shape(), stddev=noise)
+
     with tf.variable_scope('dense1'):
         h = dense(inputs, 256)
 
@@ -164,7 +201,10 @@ def edgeRNN(inputs):
 
     return h
 
-def nodeRNN(inputs, output_size=10, skip=None):
+def nodeRNN(inputs, output_size=10, skip=None, noise=None):
+    if noise is not None:
+        inputs = inputs + tf.random_normal(inputs.get_shape(), stddev=noise)
+
     with tf.variable_scope('lstm1'):
         h = lstm(inputs, 512)
 
@@ -187,28 +227,39 @@ class SRNN(object):
         self.sess = sess
         self.loader = loader
 
-    def _model(self):
+        self.noise_vals = {
+            250: 0.01,
+            500: 0.05,
+            1000: 0.1,
+            1300: 0.2,
+            2000: 0.3,
+            2500: 0.5,
+            3300: 0.7
+        }
 
+    def _model(self):
         self.nodeRNNs = []
         self.edgeRNNs = []
         for i, node in enumerate(NODES):
             self.edgeRNNs.append([])
             for j, edge in enumerate(EDGES[i]):
                 with tf.variable_scope(get_name(edge)):
-                    self.edgeRNNs[-1].append(edgeRNN(self.edge_inputs[i][j]))
+                    self.edgeRNNs[-1].append(edgeRNN(self.edge_inputs[i][j],
+                        noise=self.noise_inp))
 
             inp = tf.concat(2, 
                 [self.node_inputs[i], self.time_inputs[i]] + self.edgeRNNs[i])
 
             with tf.variable_scope(node.name):
                 self.nodeRNNs.append(nodeRNN(inp, output_size=node.out_size,
-                    skip=self.node_inputs[i]))
+                    skip=self.node_inputs[i], noise=self.noise_inp))
 
     def build_model(self):
         self.edge_inputs = []
         self.node_inputs = []
         self.time_inputs = []
         self.node_outputs = []
+        self.noise_inp = tf.placeholder(tf.float32, [])
         for i, node in enumerate(NODES):
             self.edge_inputs.append([])
             for edge in EDGES[i]:
@@ -233,12 +284,20 @@ class SRNN(object):
             loss = tf.reduce_mean(tf.squared_difference(true, pred))
             self.losses.append(loss)
             tf.scalar_summary(node.name + '_loss', loss)
-            optim = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(loss)
+            optim = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
+            # opt_func = tf.train.GradientDescentOptimizer(LEARNING_RATE)
+            # gvs = opt_func.compute_gradients(loss)
+            # gvs = [x for x in gvs if x[0] is not None]
+            # gvs = [(tf.clip_by_value(grad, -5., 5.), var)
+            #     for grad, var in gvs]
+            # gvs = [(tf.clip_by_norm(grad, 25.), var)
+            #     for grad, var in gvs]
+            # optim = opt_func.apply_gradients(gvs)
             self.optims.append(optim)
 
         self.merged = tf.merge_all_summaries()
 
-    def _get_feed_dicts(self, all_batches):
+    def _get_feed_dicts(self, all_batches, is_train):
         skipped = [False] * len(all_batches)
         i = 0
         num_skipped = 0
@@ -252,22 +311,28 @@ class SRNN(object):
             num_skipped = 0
             batch = next(all_batches[i], False)
             if batch:
+                if is_train and i == 0:
+                    if self.iter in self.noise_vals:
+                        self.noise = self.noise_vals[self.iter]
+                    self.iter += 1
+
                 inputs = [self.node_inputs[i], self.time_inputs[i],
                     self.node_outputs[i]] + self.edge_inputs[i]
                 feed_dict = {x:y for x, y in zip(inputs, batch)}
+                feed_dict[self.noise_inp] = self.noise
                 yield self.losses[i], self.optims[i], feed_dict
             else:
                 skipped[i] = True
 
             i = (i + 1) % len(all_batches)
 
-    def run_batches(self, is_train, start_ind, writer):
-        all_batches = [self.loader.get_batches(i, is_train) for i in range(len(NODES))]
-        ind = start_ind
+    def run_batches(self, is_train, writer):
+        all_batches = [self.loader.get_batches(i, is_train) 
+                       for i in range(len(NODES))]
         count = 0
         loss_sum = 0
 
-        for loss, optim, feed_dict in self._get_feed_dicts(all_batches):
+        for loss, optim, feed_dict in self._get_feed_dicts(all_batches, is_train):
             funcs = [loss]
             if is_train:
                 funcs.append(optim)
@@ -275,10 +340,10 @@ class SRNN(object):
             res = self.sess.run(funcs, feed_dict=feed_dict)
             loss_sum += res[0]
 
-            ind += 1
+            self.ind += 1
             count += 1
 
-        return loss_sum / count, ind
+        return loss_sum / count
 
     def train_model(self):
         train_writer = tf.train.SummaryWriter(os.path.join(LOGS_DIR, 'train'),
@@ -296,15 +361,16 @@ class SRNN(object):
                 logging.info("Initializing parameters")
                 sess.run(tf.initialize_all_variables())
 
-            ind = 0
+            self.ind, self.iter = 0, 0
+            self.noise = 0.
             for epoch in range(NUM_EPOCHS):
                 logging.info("Begin Epoch %d" % (epoch,))
                 logging.info("Begin Train")
-                loss, ind = self.run_batches(True, ind, train_writer)
+                loss = self.run_batches(True, train_writer)
                 logging.info("Train Loss: %0.4f" % (loss,))
 
                 logging.info("Begin Val")
-                loss, ind = self.run_batches(False, ind, val_writer)
+                loss = self.run_batches(False, val_writer)
                 logging.info("Val Loss: %0.4f" % (loss,))
 
                 logging.info("Save Checkpoint")

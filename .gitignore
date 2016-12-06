@@ -90,3 +90,7 @@ ENV/
 
 human3.6.npz
 Release-v1.1/
+weights/
+logs/
+.temp*
+numpy_arrays/

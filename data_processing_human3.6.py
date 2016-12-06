@@ -159,7 +159,8 @@ def get_node_features(activity):
     a_a = normalize(a_a)
     l_l = normalize(l_l)
 
-    filename = "human3.6_" + activity + ".npz"
+    filename = "numpy_arrays/human3.6_" + activity + ".npz"
+
     with open(filename, 'w') as f:
         np.savez(f, a_inp=a_inp, a_out=a_out, a_time=a_time, l_inp=l_inp, l_out=l_out, l_time=l_time, s_inp=s_inp, 
             s_out=s_out, s_time=s_time, s_a=s_a, s_l=s_l, a_s=a_s, l_s=l_s, a_a=a_a, l_l=l_l, val_index=val_index)
