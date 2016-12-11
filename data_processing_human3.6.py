@@ -19,6 +19,9 @@ Each npz file contains a bunch of numpy arrays. Each numpy array is shaped as fo
     a_a: (2 * num_samples, NUM_TIMESTEPS, 2 * NUM_A_FEATURES)
     l_l: (2 * num_samples, NUM_TIMESTEPS, 2 * NUM_L_FEATURES)
 
+    inp: (num_samples, NUM_TIMESTEPS, NUM_ALL_FEATURES)
+    out: (num_samples, NUM_TIMESTEPS, NUM_ALL_FEATURES)
+
     training data goes from [0, val_index)
     validation data goes from [val_index, len())
 
@@ -40,9 +43,12 @@ from transforms3d import euler
 NUM_JOINTS = 32
 USERS = ['S1', 'S5', 'S6', 'S7', 'S8', 'S9', 'S11']
 ACTIVITIES = ['Discussion', 'Eating', 'Smoking', 'Walking']
+# USERS = ['S1']
+# ACTIVITIES = ['Discussion']
 NUM_A_FEATURES = 24
 NUM_L_FEATURES = 15
 NUM_S_FEATURES = 18
+NUM_ALL_FEATURES = 96
 NUM_TIMESTEPS = 150
 
 DATA_ROOT = 'Human3.6_data'
@@ -92,13 +98,14 @@ def get_node_features_for_one(file, rotInd_array):
                 joint_array[piece][t][joint_id] = exp_map(joint_array[piece][t][joint_id])
     # joint_array[piece][time][joint_id] gives the list of three rotations (z, x, y)
     # now create the node features
+    everything = extract(joint_array, 0, 32)
     left_arm = extract(joint_array, 16, 24)
     right_arm = extract(joint_array, 24, 32)
     left_leg = extract(joint_array, 6, 11)
     right_leg = extract(joint_array, 1, 6)
     spine = get_spine(joint_array)
     # Each of these[piece][time] gives a list of features
-    return left_arm, right_arm, left_leg, right_leg, spine
+    return left_arm, right_arm, left_leg, right_leg, spine, everything
 
 def make_inp_out_time(inp, stride):
     out = np.append(inp[stride:], np.zeros((stride, NUM_TIMESTEPS, len(inp[0][0]))), axis=0)
@@ -110,7 +117,7 @@ def normalize(array):
 
 def get_node_features(activity):
     rotInd_array = parse_metadata()
-    a, l, s = [], [], []
+    a, l, s, e = [], [], [], []
     val_index = 0
     for user in USERS:
         if (user == 'S11'):
@@ -118,16 +125,18 @@ def get_node_features(activity):
         directory = os.path.join(DATA_ROOT, activity + '/' + user + '/MyPoseFeatures/D3_Angles/')
         for file in os.listdir(directory):
             filename = os.path.join(directory, file)
-            left_arm, right_arm, left_leg, right_leg, spine = get_node_features_for_one(filename, rotInd_array)
+            left_arm, right_arm, left_leg, right_leg, spine, everything = get_node_features_for_one(filename, rotInd_array)
             for piece in range(len(spine)):
                 a.append(left_arm[piece])
                 a.append(right_arm[piece])
                 l.append(left_leg[piece])
                 l.append(right_leg[piece])
                 s.append(spine[piece])
+                e.append(everything[piece])
     a_inp, a_out, a_time = make_inp_out_time(np.asarray(a), 2)
     l_inp, l_out, l_time = make_inp_out_time(np.asarray(l), 2)
     s_inp, s_out, s_time = make_inp_out_time(np.asarray(s), 1)
+    inp, out, time = make_inp_out_time(np.asarray(e), 1)
 
     num_samples = len(s_inp)
 
@@ -152,6 +161,9 @@ def get_node_features(activity):
     s_inp = normalize(s_inp)
     s_out = normalize(s_out)
     s_time = normalize(s_time)
+    inp = normalize(inp)
+    out = normalize(out)
+    time = normalize(time)
     s_a = normalize(s_a)
     s_l = normalize(s_l)
     a_s = normalize(a_s)
@@ -159,11 +171,11 @@ def get_node_features(activity):
     a_a = normalize(a_a)
     l_l = normalize(l_l)
 
-    filename = "numpy_arrays/human3.6_" + activity + ".npz"
+    filename = "human3.6_" + activity + ".npz"
 
     with open(filename, 'w') as f:
         np.savez(f, a_inp=a_inp, a_out=a_out, a_time=a_time, l_inp=l_inp, l_out=l_out, l_time=l_time, s_inp=s_inp, 
-            s_out=s_out, s_time=s_time, s_a=s_a, s_l=s_l, a_s=a_s, l_s=l_s, a_a=a_a, l_l=l_l, val_index=val_index)
+            s_out=s_out, s_time=s_time, inp=inp, out=out, time=time, s_a=s_a, s_l=s_l, a_s=a_s, l_s=l_s, a_a=a_a, l_l=l_l, val_index=val_index)
         f.close()
 
 if __name__ == '__main__':
