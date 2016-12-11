@@ -223,20 +223,15 @@ def nodeRNN(inputs, output_size=10, skip=None, noise=None):
 
     return h
 
+def get_num_plateaus(ind):
+    return 2 if ind <= 3 else 4
+
 class SRNN(object):
     def __init__(self, sess, loader):
         self.sess = sess
         self.loader = loader
-
-        self.noise_vals = {
-            109: 0.01,
-            500: 0.05,
-            1000: 0.1,
-            1300: 0.2,
-            2000: 0.3,
-            2500: 0.5,
-            3300: 0.7
-        }
+        self.noise_vals = [0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7]
+        self.noise_ind = 0
 
     def _model(self):
         self.nodeRNNs = []
@@ -314,9 +309,6 @@ class SRNN(object):
             if batch:
                 if is_train and i == 0:
                     logging.info("Iter: %d" % (self.iter,))
-                    if self.iter in self.noise_vals:
-                        self.noise = self.noise_vals[self.iter]
-                        logging.info("Adding Noise: %0.3f", self.noise)
                     self.iter += 1
 
                 inputs = [self.node_inputs[i], self.time_inputs[i],
@@ -354,7 +346,7 @@ class SRNN(object):
         val_writer = tf.train.SummaryWriter(os.path.join(LOGS_DIR, 'val'),
                 graph=self.sess.graph)
 
-        saver = tf.train.Saver()
+        saver = tf.train.Saver(max_to_keep=None)
 
         with self.sess as sess:
             if USE_CHECKPOINT and os.path.isfile(CHECKPOINT):
@@ -365,7 +357,9 @@ class SRNN(object):
                 sess.run(tf.initialize_all_variables())
 
             self.ind, self.iter = 0, START_ITER
-            self.noise = 0.
+            self.noise = self.noise_vals[self.noise_ind]
+            prev_train_loss = float('inf')
+            num_plateaus = 0
             for epoch in range(NUM_EPOCHS):
                 logging.info("Begin Epoch %d" % (epoch,))
                 logging.info("Begin Train")
@@ -373,8 +367,20 @@ class SRNN(object):
                 logging.info("Train Loss: %0.4f" % (loss,))
 
                 logging.info("Begin Val")
-                loss = self.run_batches(False, val_writer)
-                logging.info("Val Loss: %0.4f" % (loss,))
+                val_loss = self.run_batches(False, val_writer)
+                logging.info("Val Loss: %0.4f" % (val_loss,))
+
+                if loss >= prev_train_loss:
+                    num_plateaus += 1
+                    if (num_plateaus == get_num_plateaus(self.noise_ind)
+                        and self.noise_ind < len(self.noise_vals) - 1):
+                        self.noise_ind += 1
+                        saver.save(sess, CHECKPOINT_DIR +
+                            'model_{}.ckpt'.format(self.noise))
+                        self.noise = self.noise_vals[self.noise_ind]
+                        logging.info("Adding Noise %0.3f" % (self.noise,))
+                        num_plateaus = 0
+                prev_train_loss = loss
 
                 logging.info("Save Checkpoint")
                 saver.save(sess, CHECKPOINT)
