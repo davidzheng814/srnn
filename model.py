@@ -10,7 +10,7 @@ import numpy as np
 import argparse
 from collections import namedtuple
 
-logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', filename="logs/withnoise.log", level=logging.INFO)
 
 NUM_EPOCHS = 400
 BATCH_SIZE = 100
@@ -22,6 +22,7 @@ BETA_1 = 0.9
 
 USE_CHECKPOINT = False
 CHECKPOINT = 'weights/model.ckpt'
+CHECKPOINT_DIR = 'weights/'
 LOGS_DIR = 'logs/'
 
 DATA_DIR = 'numpy_arrays/'
@@ -194,9 +195,6 @@ def edgeRNN(inputs, noise=None):
     with tf.variable_scope('dense1'):
         h = dense(inputs, 256)
 
-    with tf.variable_scope('dense2'):
-        h = dense(h, 256)
-
     with tf.variable_scope('lstm1'):
         h = lstm(h, 512)
 
@@ -210,12 +208,6 @@ def nodeRNN(inputs, output_size=10, skip=None, noise=None):
         h = lstm(inputs, 512)
 
     with tf.variable_scope('dense1'):
-        h = dense(h, 256)
-
-    with tf.variable_scope('dense2'):
-        h = dense(h, 100)
-
-    with tf.variable_scope('dense3'):
         h = dense(h, output_size)
 
     if skip is not None:
@@ -231,6 +223,7 @@ class SRNN(object):
         self.sess = sess
         self.loader = loader
         self.noise_vals = [0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7]
+        # self.noise_vals = [0]
         self.noise_ind = 0
 
     def _model(self):
